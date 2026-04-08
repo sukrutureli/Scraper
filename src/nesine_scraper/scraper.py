@@ -19,10 +19,10 @@ HEADERS = {
 
 REQUEST_TIMEOUT = (10, 60)
 
-# Detail URL kalıbı.
-# Senin dediğine göre detail URL içindeki id, Python'daki event id ile aynı.
-# Gerekirse sadece bu pattern'i değiştirirsin.
-DETAIL_URL_TEMPLATE = "https://istatistik.nesine.com/{event_id}/ozet"
+FOOTBALL_TYPE = 1
+BASKETBALL_TYPE = 2
+
+DETAIL_URL_TEMPLATE = "https://istatistik.nesine.com/{event_id}"
 
 
 def _normalize_date(date_str: str) -> str:
@@ -38,61 +38,17 @@ def _build_detail_url(event_id: Any) -> str:
     return DETAIL_URL_TEMPLATE.format(event_id=event_id)
 
 
-def _option_label(mtid: int, n: int, sov: Any) -> str:
-    if mtid == 1:
-        return {1: "ms1", 2: "ms0", 3: "ms2"}.get(n, f"n{n}")
-
-    if mtid == 12:
-        return {1: "alt", 2: "ust"}.get(n, f"n{n}")
-
-    if mtid == 38:
-        return {1: "var", 2: "yok"}.get(n, f"n{n}")
-
-    return f"n{n}"
-
-
-def _extract_core_odds(markets: List[Dict[str, Any]]) -> Dict[str, float]:
-    odds: Dict[str, float] = {}
-
-    for market in markets:
-        mtid = market.get("MTID")
-        sov = market.get("SOV")
-        oca = market.get("OCA", [])
-
-        # Sadece ihtiyacımız olan marketler:
-        # 1 = Maç Sonucu
-        # 12 = Toplam Gol 2.5
-        # 38 = KG Var/Yok
-        if mtid not in (1, 12, 38):
-            continue
-
-        # Toplam Gol marketinde özellikle 2.5 istiyoruz
-        if mtid == 12 and str(sov) != "2.5":
-            continue
-
-        for option in oca:
-            n = option.get("N")
-            o = option.get("O")
-
-            if n is None or o is None:
-                continue
-
-            key = _option_label(mtid, n, sov)
-            if key in ("ms1", "ms0", "ms2", "alt", "ust", "var", "yok"):
-                odds[key] = float(o)
-
-    return odds
-
-
-def _extract_mbs(markets: List[Dict[str, Any]]) -> int:
-    for market in markets:
-        try:
-            mbs = market.get("MBS")
-            if mbs is not None:
-                return int(mbs)
-        except Exception:
-            pass
-    return 0
+def _safe_odd(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+        v = float(value)
+        # Nesine bazı marketlerde 1.00'ı ekranda "-" gibi gösteriyor
+        if v <= 1.0:
+            return 0.0
+        return v
+    except Exception:
+        return 0.0
 
 
 def _build_session() -> requests.Session:
@@ -137,70 +93,240 @@ def _download_payload() -> Dict[str, Any]:
     raise RuntimeError(f"Nesine verisi alınamadı. Son hata: {last_error}")
 
 
-def fetch_matches(date_str: str) -> List[Dict[str, Any]]:
-    payload = _download_payload()
+def _extract_mbs(markets: List[Dict[str, Any]]) -> int:
+    for market in markets:
+        try:
+            mbs = market.get("MBS")
+            if mbs is not None:
+                return int(mbs)
+        except Exception:
+            pass
+    return 0
 
+
+def _extract_football_odds(markets: List[Dict[str, Any]]) -> Dict[str, float]:
+    odds = {
+        "ms1": 0.0,
+        "ms0": 0.0,
+        "ms2": 0.0,
+        "alt": 0.0,
+        "ust": 0.0,
+        "var": 0.0,
+        "yok": 0.0,
+    }
+
+    for market in markets:
+        mtid = market.get("MTID")
+        sov = market.get("SOV")
+        oca = market.get("OCA", [])
+
+        if not isinstance(oca, list):
+            continue
+
+        if mtid == 1:
+            for option in oca:
+                n = option.get("N")
+                o = _safe_odd(option.get("O"))
+                if n == 1:
+                    odds["ms1"] = o
+                elif n == 2:
+                    odds["ms0"] = o
+                elif n == 3:
+                    odds["ms2"] = o
+
+        elif mtid == 12 and str(sov) == "2.5":
+            for option in oca:
+                n = option.get("N")
+                o = _safe_odd(option.get("O"))
+                if n == 1:
+                    odds["alt"] = o
+                elif n == 2:
+                    odds["ust"] = o
+
+        elif mtid == 38:
+            for option in oca:
+                n = option.get("N")
+                o = _safe_odd(option.get("O"))
+                if n == 1:
+                    odds["var"] = o
+                elif n == 2:
+                    odds["yok"] = o
+
+    return odds
+
+
+def _extract_basketball_odds(markets: List[Dict[str, Any]]) -> Dict[str, float]:
+    odds = {
+        "ms1": 0.0,
+        "ms2": 0.0,
+        "h1Value": 0.0,
+        "h1": 0.0,
+        "h2": 0.0,
+        "h2Value": 0.0,
+        "alt": 0.0,
+        "limit": 0.0,
+        "ust": 0.0,
+    }
+
+    for market in markets:
+        mtid = market.get("MTID")
+        sov = market.get("SOV")
+        oca = market.get("OCA", [])
+
+        if not isinstance(oca, list):
+            continue
+
+        # MS
+        if mtid == 142:
+            for option in oca:
+                n = option.get("N")
+                o = _safe_odd(option.get("O"))
+                if n == 1:
+                    odds["ms1"] = o
+                elif n == 2:
+                    odds["ms2"] = o
+
+        # Maç toplam sayı alt/üst
+        elif mtid == 149:
+            try:
+                odds["limit"] = float(sov)
+            except Exception:
+                odds["limit"] = 0.0
+
+            for option in oca:
+                n = option.get("N")
+                o = _safe_odd(option.get("O"))
+                if n == 1:
+                    odds["alt"] = o
+                elif n == 2:
+                    odds["ust"] = o
+
+        # Handikap
+        elif mtid == 144:
+            try:
+                line = float(sov)
+            except Exception:
+                line = 0.0
+
+            odds["h1Value"] = line
+            odds["h2Value"] = -line
+
+            for option in oca:
+                n = option.get("N")
+                o = _safe_odd(option.get("O"))
+                if n == 1:
+                    odds["h1"] = o
+                elif n == 2:
+                    odds["h2"] = o
+
+    return odds
+
+
+def _build_football_match(event: Dict[str, Any], normalized_date: str) -> Dict[str, Any]:
+    event_id = event.get("C")
+    home = event.get("HN") or ""
+    away = event.get("AN") or ""
+    markets = event.get("MA", [])
+
+    core_odds = _extract_football_odds(markets)
+
+    return {
+        "event_id": event_id,
+        "league_code": event.get("LC"),
+        "date": normalized_date,
+        "time": event.get("T") or "",
+        "day": event.get("DAY") or "",
+        "name": event.get("ENO") or f"{home} - {away}",
+        "home": home,
+        "away": away,
+        "url": _build_detail_url(event_id),
+        "mbs": _extract_mbs(markets),
+        "ms1": core_odds["ms1"],
+        "ms0": core_odds["ms0"],
+        "ms2": core_odds["ms2"],
+        "alt": core_odds["alt"],
+        "ust": core_odds["ust"],
+        "var": core_odds["var"],
+        "yok": core_odds["yok"],
+    }
+
+
+def _build_basketball_match(event: Dict[str, Any], normalized_date: str) -> Dict[str, Any]:
+    event_id = event.get("C")
+    home = event.get("HN") or ""
+    away = event.get("AN") or ""
+    markets = event.get("MA", [])
+
+    core_odds = _extract_basketball_odds(markets)
+
+    return {
+        "event_id": event_id,
+        "league_code": event.get("LC"),
+        "date": normalized_date,
+        "time": event.get("T") or "",
+        "day": event.get("DAY") or "",
+        "name": event.get("ENO") or f"{home} - {away}",
+        "home": home,
+        "away": away,
+        "url": _build_detail_url(event_id),
+        "mbs": _extract_mbs(markets),
+        "ms1": core_odds["ms1"],
+        "ms2": core_odds["ms2"],
+        "h1Value": core_odds["h1Value"],
+        "h1": core_odds["h1"],
+        "h2": core_odds["h2"],
+        "h2Value": core_odds["h2Value"],
+        "alt": core_odds["alt"],
+        "limit": core_odds["limit"],
+        "ust": core_odds["ust"],
+    }
+
+
+def fetch_football_matches(date_str: str) -> List[Dict[str, Any]]:
+    payload = _download_payload()
     events = payload.get("sg", {}).get("EA", [])
     matches: List[Dict[str, Any]] = []
 
     for event in events:
-        # sadece futbol
-        if event.get("TYPE") != 1:
+        if event.get("TYPE") != FOOTBALL_TYPE:
             continue
 
         raw_date = event.get("D")
         normalized_date = _normalize_date(raw_date) if raw_date else None
-
         if normalized_date != date_str:
             continue
 
-        event_id = event.get("C")
         home = event.get("HN")
         away = event.get("AN")
-
         if not home or not away:
             continue
 
-        markets = event.get("MA", [])
-        core_odds = _extract_core_odds(markets)
+        matches.append(_build_football_match(event, normalized_date))
 
-        match = {
-            "event_id": event_id,
-            "league_code": event.get("LC"),
-            "date": normalized_date,
-            "time": event.get("T") or "",
-            "day": event.get("DAY") or "",
-            "name": event.get("ENO") or f"{home} - {away}",
-            "home": home,
-            "away": away,
-            "url": _build_detail_url(event_id),
-            "mbs": _extract_mbs(markets),
-            "ms1": core_odds.get("ms1", 0.0),
-            "ms0": core_odds.get("ms0", 0.0),
-            "ms2": core_odds.get("ms2", 0.0),
-            "alt": core_odds.get("alt", 0.0),
-            "ust": core_odds.get("ust", 0.0),
-            "var": core_odds.get("var", 0.0),
-            "yok": core_odds.get("yok", 0.0),
-        }
+    matches.sort(key=lambda x: (x.get("time") or "", x.get("name") or ""))
+    return matches
 
-        matches.append(match)
 
-    unique_matches = []
-    seen = set()
+def fetch_basketball_matches(date_str: str) -> List[Dict[str, Any]]:
+    payload = _download_payload()
+    events = payload.get("sg", {}).get("EA", [])
+    matches: List[Dict[str, Any]] = []
 
-    for m in matches:
-        key = (
-            m.get("event_id"),
-            m.get("home"),
-            m.get("away"),
-            m.get("date"),
-            m.get("time"),
-        )
-        if key in seen:
+    for event in events:
+        if event.get("TYPE") != BASKETBALL_TYPE:
             continue
-        seen.add(key)
-        unique_matches.append(m)
 
-    unique_matches.sort(key=lambda x: (x.get("time") or "", x.get("name") or ""))
-    return unique_matches
+        raw_date = event.get("D")
+        normalized_date = _normalize_date(raw_date) if raw_date else None
+        if normalized_date != date_str:
+            continue
+
+        home = event.get("HN")
+        away = event.get("AN")
+        if not home or not away:
+            continue
+
+        matches.append(_build_basketball_match(event, normalized_date))
+
+    matches.sort(key=lambda x: (x.get("time") or "", x.get("name") or ""))
+    return matches
