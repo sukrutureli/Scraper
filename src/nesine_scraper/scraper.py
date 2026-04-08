@@ -1,7 +1,3 @@
----
-
-# 📄 src/nesine_scraper/scraper.py
-```python
 import requests
 from datetime import datetime
 
