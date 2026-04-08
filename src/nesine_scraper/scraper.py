@@ -19,6 +19,11 @@ HEADERS = {
 
 REQUEST_TIMEOUT = (10, 60)
 
+# Detail URL kalıbı.
+# Senin dediğine göre detail URL içindeki id, Python'daki event id ile aynı.
+# Gerekirse sadece bu pattern'i değiştirirsin.
+DETAIL_URL_TEMPLATE = "https://istatistik.nesine.com/mac/{event_id}"
+
 
 def _normalize_date(date_str: str) -> str:
     parts = date_str.split(".")
@@ -27,39 +32,43 @@ def _normalize_date(date_str: str) -> str:
     return date_str
 
 
+def _build_detail_url(event_id: Any) -> str:
+    if event_id is None:
+        return ""
+    return DETAIL_URL_TEMPLATE.format(event_id=event_id)
+
+
 def _option_label(mtid: int, n: int, sov: Any) -> str:
     if mtid == 1:
-        return {1: "MS1", 2: "MSX", 3: "MS2"}.get(n, f"N{n}")
+        return {1: "ms1", 2: "ms0", 3: "ms2"}.get(n, f"n{n}")
 
     if mtid == 12:
-        line = str(sov)
-        return {1: f"Alt {line}", 2: f"Üst {line}"}.get(n, f"N{n}")
+        return {1: "alt", 2: "ust"}.get(n, f"n{n}")
 
     if mtid == 38:
-        return {1: "Var", 2: "Yok"}.get(n, f"N{n}")
+        return {1: "var", 2: "yok"}.get(n, f"n{n}")
 
-    return f"N{n}"
-
-
-def _market_name(mtid: int, sov: Any) -> str:
-    if mtid == 1:
-        return "Maç Sonucu"
-    if mtid == 12:
-        return f"Toplam Gol {sov}"
-    if mtid == 38:
-        return "KG Var/Yok"
-    return f"MTID_{mtid}"
+    return f"n{n}"
 
 
-def _extract_odds(markets: List[Dict[str, Any]]) -> Dict[str, Any]:
-    odds: Dict[str, Any] = {}
+def _extract_core_odds(markets: List[Dict[str, Any]]) -> Dict[str, float]:
+    odds: Dict[str, float] = {}
 
     for market in markets:
         mtid = market.get("MTID")
         sov = market.get("SOV")
         oca = market.get("OCA", [])
 
-        market_name = _market_name(mtid, sov)
+        # Sadece ihtiyacımız olan marketler:
+        # 1 = Maç Sonucu
+        # 12 = Toplam Gol 2.5
+        # 38 = KG Var/Yok
+        if mtid not in (1, 12, 38):
+            continue
+
+        # Toplam Gol marketinde özellikle 2.5 istiyoruz
+        if mtid == 12 and str(sov) != "2.5":
+            continue
 
         for option in oca:
             n = option.get("N")
@@ -68,10 +77,22 @@ def _extract_odds(markets: List[Dict[str, Any]]) -> Dict[str, Any]:
             if n is None or o is None:
                 continue
 
-            label = _option_label(mtid, n, sov)
-            odds[f"{market_name} | {label}"] = o
+            key = _option_label(mtid, n, sov)
+            if key in ("ms1", "ms0", "ms2", "alt", "ust", "var", "yok"):
+                odds[key] = float(o)
 
     return odds
+
+
+def _extract_mbs(markets: List[Dict[str, Any]]) -> int:
+    for market in markets:
+        try:
+            mbs = market.get("MBS")
+            if mbs is not None:
+                return int(mbs)
+        except Exception:
+            pass
+    return 0
 
 
 def _build_session() -> requests.Session:
@@ -133,27 +154,34 @@ def fetch_matches(date_str: str) -> List[Dict[str, Any]]:
         if normalized_date != date_str:
             continue
 
+        event_id = event.get("C")
         home = event.get("HN")
         away = event.get("AN")
 
         if not home or not away:
             continue
 
+        markets = event.get("MA", [])
+        core_odds = _extract_core_odds(markets)
+
         match = {
-            "id": event.get("C"),
-            "event_version": event.get("EV"),
-            "code": event.get("BC"),
+            "event_id": event_id,
             "league_code": event.get("LC"),
-            "league": event.get("LC"),
+            "date": normalized_date,
+            "time": event.get("T") or "",
+            "day": event.get("DAY") or "",
+            "name": event.get("ENO") or f"{home} - {away}",
             "home": home,
             "away": away,
-            "match_name": event.get("ENO"),
-            "date": normalized_date,
-            "time": event.get("T"),
-            "day": event.get("DAY"),
-            "type": event.get("TYPE"),
-            "gt": event.get("GT"),
-            "odds": _extract_odds(event.get("MA", [])),
+            "url": _build_detail_url(event_id),
+            "mbs": _extract_mbs(markets),
+            "ms1": core_odds.get("ms1", 0.0),
+            "ms0": core_odds.get("ms0", 0.0),
+            "ms2": core_odds.get("ms2", 0.0),
+            "alt": core_odds.get("alt", 0.0),
+            "ust": core_odds.get("ust", 0.0),
+            "var": core_odds.get("var", 0.0),
+            "yok": core_odds.get("yok", 0.0),
         }
 
         matches.append(match)
@@ -162,10 +190,17 @@ def fetch_matches(date_str: str) -> List[Dict[str, Any]]:
     seen = set()
 
     for m in matches:
-        key = (m.get("id"), m.get("home"), m.get("away"), m.get("date"), m.get("time"))
+        key = (
+            m.get("event_id"),
+            m.get("home"),
+            m.get("away"),
+            m.get("date"),
+            m.get("time"),
+        )
         if key in seen:
             continue
         seen.add(key)
         unique_matches.append(m)
 
+    unique_matches.sort(key=lambda x: (x.get("time") or "", x.get("name") or ""))
     return unique_matches
