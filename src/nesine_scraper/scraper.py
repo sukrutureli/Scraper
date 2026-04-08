@@ -14,7 +14,6 @@ HEADERS = {
 
 
 def _normalize_date(date_str: str) -> str:
-    # 08.04.2026 -> 2026-04-08
     parts = date_str.split(".")
     if len(parts) == 3:
         return f"{parts[2]}-{parts[1]}-{parts[0]}"
@@ -22,24 +21,17 @@ def _normalize_date(date_str: str) -> str:
 
 
 def _option_label(mtid: int, n: int, sov: Any) -> str:
-    """
-    Bazı marketleri anlamlı etiketliyoruz.
-    Bilmediğimiz marketlerde generic dönüyoruz.
-    """
     if mtid == 1:
-        # Maç Sonucu
         return {1: "MS1", 2: "MSX", 3: "MS2"}.get(n, f"N{n}")
 
     if mtid == 12:
-        # 2.5 Alt/Üst gibi
         line = str(sov)
         return {1: f"Alt {line}", 2: f"Üst {line}"}.get(n, f"N{n}")
 
-    if mtid == 3:
-        # Çifte şans / benzeri olabilir, kesin isim basmıyorum
-        return {1: "N1", 2: "N2", 3: "N3"}.get(n, f"N{n}")
+    # KG Var/Yok için olası marketlerden biri
+    if mtid in (20,):
+        return {1: "Var", 2: "Yok"}.get(n, f"N{n}")
 
-    # Genel fallback
     return f"N{n}"
 
 
@@ -48,6 +40,8 @@ def _market_name(mtid: int, sov: Any) -> str:
         return "Maç Sonucu"
     if mtid == 12:
         return f"Toplam Gol {sov}"
+    if mtid in (20,):
+        return "KG Var/Yok"
     return f"MTID_{mtid}"
 
 
@@ -69,12 +63,7 @@ def _extract_odds(markets: List[Dict[str, Any]]) -> Dict[str, Any]:
                 continue
 
             label = _option_label(mtid, n, sov)
-            key = f"{market_name} | {label}"
-            odds[key] = o
-
-        # ayrıca raw market bilgisini de saklayalım
-        odds[f"{market_name} | market_no"] = market.get("NO")
-        odds[f"{market_name} | mbs"] = market.get("MBS")
+            odds[f"{market_name} | {label}"] = o
 
     return odds
 
@@ -97,6 +86,10 @@ def fetch_matches(date_str: str) -> List[Dict[str, Any]]:
     matches: List[Dict[str, Any]] = []
 
     for event in events:
+        # sadece futbol
+        if event.get("TYPE") != 1:
+            continue
+
         raw_date = event.get("D")
         normalized_date = _normalize_date(raw_date) if raw_date else None
 
@@ -114,7 +107,7 @@ def fetch_matches(date_str: str) -> List[Dict[str, Any]]:
             "event_version": event.get("EV"),
             "code": event.get("BC"),
             "league_code": event.get("LC"),
-            "league": event.get("LC"),  # şimdilik isim değil kod geliyor
+            "league": event.get("LC"),
             "home": home,
             "away": away,
             "match_name": event.get("ENO"),
@@ -128,7 +121,6 @@ def fetch_matches(date_str: str) -> List[Dict[str, Any]]:
 
         matches.append(match)
 
-    # basit dedupe
     unique_matches = []
     seen = set()
 
