@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from .scraper import fetch_basketball_matches, fetch_football_matches
 
@@ -16,7 +17,7 @@ def main():
     parser.add_argument("--date", help="YYYY-MM-DD", default=None)
     args = parser.parse_args()
 
-    date_str = args.date or datetime.now().strftime("%Y-%m-%d")
+    date_str = args.date or datetime.now(ZoneInfo("Europe/Istanbul")).strftime("%Y-%m-%d")
 
     print(f"📅 Fetching matches for {date_str}")
 
