@@ -35,7 +35,7 @@ def _option_label(mtid: int, n: int, sov: Any) -> str:
         line = str(sov)
         return {1: f"Alt {line}", 2: f"Üst {line}"}.get(n, f"N{n}")
 
-    if mtid == 20:
+    if mtid == 38:
         return {1: "Var", 2: "Yok"}.get(n, f"N{n}")
 
     return f"N{n}"
@@ -46,7 +46,7 @@ def _market_name(mtid: int, sov: Any) -> str:
         return "Maç Sonucu"
     if mtid == 12:
         return f"Toplam Gol {sov}"
-    if mtid == 20:
+    if mtid == 38:
         return "KG Var/Yok"
     return f"MTID_{mtid}"
 
