@@ -154,6 +154,48 @@ def _extract_football_odds(markets: List[Dict[str, Any]]) -> Dict[str, float]:
 
     return odds
 
+def _pick_most_balanced_market(markets: List[Dict[str, Any]], target_mtid: int) -> Dict[str, Any] | None:
+    candidates = []
+
+    for market in markets:
+        if market.get("MTID") != target_mtid:
+            continue
+
+        oca = market.get("OCA", [])
+        if not isinstance(oca, list) or len(oca) < 2:
+            continue
+
+        odd1 = None
+        odd2 = None
+
+        for option in oca:
+            n = option.get("N")
+            o = _safe_odd(option.get("O"))
+
+            if n == 1:
+                odd1 = o
+            elif n == 2:
+                odd2 = o
+
+        if odd1 is None or odd2 is None or odd1 <= 0 or odd2 <= 0:
+            continue
+
+        diff = abs(odd1 - odd2)
+
+        try:
+            sov = float(market.get("SOV", 0))
+        except Exception:
+            sov = 0.0
+
+        candidates.append((diff, abs(sov), market))
+        # diff küçük olan daha iyi
+        # eşitse merkeze yakın olsun diye |sov| küçük olan öne gelsin
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    return candidates[0][2]
 
 def _extract_basketball_odds(markets: List[Dict[str, Any]]) -> Dict[str, float]:
     odds = {
@@ -168,16 +210,12 @@ def _extract_basketball_odds(markets: List[Dict[str, Any]]) -> Dict[str, float]:
         "ust": 0.0,
     }
 
+    # MS: burada genelde tek market yeterli
     for market in markets:
         mtid = market.get("MTID")
-        sov = market.get("SOV")
         oca = market.get("OCA", [])
 
-        if not isinstance(oca, list):
-            continue
-
-        # MS
-        if mtid == 142:
+        if mtid == 142 and isinstance(oca, list):
             for option in oca:
                 n = option.get("N")
                 o = _safe_odd(option.get("O"))
@@ -185,39 +223,42 @@ def _extract_basketball_odds(markets: List[Dict[str, Any]]) -> Dict[str, float]:
                     odds["ms1"] = o
                 elif n == 2:
                     odds["ms2"] = o
+            break
 
-        # Maç toplam sayı alt/üst
-        elif mtid == 149:
-            try:
-                odds["limit"] = float(sov)
-            except Exception:
-                odds["limit"] = 0.0
+    # Alt/Üst: en dengeli baremi seç
+    total_market = _pick_most_balanced_market(markets, 149)
+    if total_market:
+        try:
+            odds["limit"] = float(total_market.get("SOV", 0))
+        except Exception:
+            odds["limit"] = 0.0
 
-            for option in oca:
-                n = option.get("N")
-                o = _safe_odd(option.get("O"))
-                if n == 1:
-                    odds["alt"] = o
-                elif n == 2:
-                    odds["ust"] = o
+        for option in total_market.get("OCA", []):
+            n = option.get("N")
+            o = _safe_odd(option.get("O"))
+            if n == 1:
+                odds["alt"] = o
+            elif n == 2:
+                odds["ust"] = o
 
-        # Handikap
-        elif mtid == 144:
-            try:
-                line = float(sov)
-            except Exception:
-                line = 0.0
+    # Handikap: en dengeli baremi seç
+    handicap_market = _pick_most_balanced_market(markets, 144)
+    if handicap_market:
+        try:
+            line = float(handicap_market.get("SOV", 0))
+        except Exception:
+            line = 0.0
 
-            odds["h1Value"] = line
-            odds["h2Value"] = -line
+        odds["h1Value"] = line
+        odds["h2Value"] = -line
 
-            for option in oca:
-                n = option.get("N")
-                o = _safe_odd(option.get("O"))
-                if n == 1:
-                    odds["h1"] = o
-                elif n == 2:
-                    odds["h2"] = o
+        for option in handicap_market.get("OCA", []):
+            n = option.get("N")
+            o = _safe_odd(option.get("O"))
+            if n == 1:
+                odds["h1"] = o
+            elif n == 2:
+                odds["h2"] = o
 
     return odds
 
