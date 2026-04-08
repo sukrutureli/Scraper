@@ -7,7 +7,14 @@ from .scraper import fetch_matches
 
 
 def format_matches_text(matches, date_str):
-    lines = [f"{date_str}\n"]
+    lines = []
+
+    if matches and matches[0].get("day"):
+        day = matches[0].get("day")
+        y, m, d = date_str.split("-")
+        lines.append(f"{d}.{m}.{y} {day}\n")
+    else:
+        lines.append(f"{date_str}\n")
 
     if not matches:
         lines.append("Maç bulunamadı.")
@@ -27,6 +34,9 @@ def format_matches_text(matches, date_str):
         alt25 = odds.get("Toplam Gol 2.5 | Alt 2.5")
         ust25 = odds.get("Toplam Gol 2.5 | Üst 2.5")
 
+        kg_var = odds.get("KG Var/Yok | Var")
+        kg_yok = odds.get("KG Var/Yok | Yok")
+
         if ms1 is not None and msx is not None and ms2 is not None:
             ms_text = f"MS: 1 {ms1:.2f} | X {msx:.2f} | 2 {ms2:.2f}"
         else:
@@ -37,10 +47,16 @@ def format_matches_text(matches, date_str):
         else:
             au_text = "2.5 Alt/Üst: yok"
 
+        if kg_var is not None and kg_yok is not None:
+            kg_text = f"KG Var/Yok: Var {kg_var:.2f} | Yok {kg_yok:.2f}"
+        else:
+            kg_text = "KG Var/Yok: yok"
+
         lines.append(f"{time_str} | Lig: {league}")
         lines.append(f"{home} - {away}")
         lines.append(ms_text)
         lines.append(au_text)
+        lines.append(kg_text)
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -78,7 +94,7 @@ def main():
     with open(txt_latest_path, "w", encoding="utf-8") as f:
         f.write(text_output)
 
-    print(f"✅ Saved {len(matches)} matches")
+    print(f"✅ Saved {len(matches)} football matches")
     print(f"📁 {json_dated_path}")
     print(f"📁 {json_latest_path}")
     print(f"📁 {txt_dated_path}")
