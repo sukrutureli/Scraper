@@ -22,7 +22,7 @@ REQUEST_TIMEOUT = (10, 60)
 # Detail URL kalıbı.
 # Senin dediğine göre detail URL içindeki id, Python'daki event id ile aynı.
 # Gerekirse sadece bu pattern'i değiştirirsin.
-DETAIL_URL_TEMPLATE = "https://istatistik.nesine.com/mac/{event_id}"
+DETAIL_URL_TEMPLATE = "https://istatistik.nesine.com/{event_id}/ozet"
 
 
 def _normalize_date(date_str: str) -> str:
