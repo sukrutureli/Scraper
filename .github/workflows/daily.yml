@@ -1,8 +1,9 @@
 name: Daily Scraper
 
 on:
-  schedule:
-    - cron: "0 21 * * *"
+  # Legacy schedule disabled after tahmin-platform cutover.
+  # schedule:
+  #   - cron: "0 21 * * *"
   workflow_dispatch:
 
 permissions:
